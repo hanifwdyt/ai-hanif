@@ -45,6 +45,26 @@ export async function handleChat(request, clientRawRequest = null) {
   }
   cacheClaudeHeaders(clientRawRequest.headers);
 
+  // Minion routing: if x-minion-id header is present and a route is configured
+  // in settings.minionRoutes, override body.model with the routed model.
+  // This lets agents (Semar, Petruk, Gareng, Bagong, etc.) be routed to
+  // different upstream models per identity without changing client code.
+  try {
+    const minionId = (request.headers.get("x-minion-id") || "").trim().toLowerCase();
+    if (minionId) {
+      const settingsForRouting = await getSettings();
+      const routes = settingsForRouting?.minionRoutes || {};
+      const routedModel = routes[minionId];
+      if (routedModel && typeof routedModel === "string" && routedModel.trim()) {
+        const originalModel = body.model;
+        body.model = routedModel.trim();
+        log.info("MINION", `Routed "${minionId}": ${originalModel} → ${body.model}`);
+      }
+    }
+  } catch (e) {
+    log.warn("MINION", `Routing failed: ${e?.message || e}`);
+  }
+
   // Log request endpoint and model
   const url = new URL(request.url);
   const modelStr = body.model;

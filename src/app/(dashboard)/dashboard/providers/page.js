@@ -106,6 +106,8 @@ export default function ProvidersPage() {
     useState(false);
   const [testingMode, setTestingMode] = useState(null);
   const [testResults, setTestResults] = useState(null);
+  const [hiddenProviders, setHiddenProviders] = useState(() => new Set());
+  const [manageVisibility, setManageVisibility] = useState(false);
   const notify = useNotificationStore();
   const searchQuery = useHeaderSearchStore((s) => s.query);
   const registerSearch = useHeaderSearchStore((s) => s.register);
@@ -143,15 +145,20 @@ export default function ProvidersPage() {
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const [connectionsRes, nodesRes] = await Promise.all([
+        const [connectionsRes, nodesRes, settingsRes] = await Promise.all([
           fetch("/api/providers"),
           fetch("/api/provider-nodes"),
+          fetch("/api/settings"),
         ]);
         const connectionsData = await connectionsRes.json();
         const nodesData = await nodesRes.json();
         if (connectionsRes.ok)
           setConnections(connectionsData.connections || []);
         if (nodesRes.ok) setProviderNodes(nodesData.nodes || []);
+        if (settingsRes.ok) {
+          const settingsData = await settingsRes.json();
+          setHiddenProviders(new Set(settingsData.hiddenProviders || []));
+        }
       } catch (error) {
         console.log("Error fetching data:", error);
       } finally {
@@ -160,6 +167,32 @@ export default function ProvidersPage() {
     };
     fetchData();
   }, []);
+
+  const handleToggleHidden = async (providerId) => {
+    const next = new Set(hiddenProviders);
+    if (next.has(providerId)) {
+      next.delete(providerId);
+    } else {
+      next.add(providerId);
+    }
+    setHiddenProviders(next);
+    try {
+      const res = await fetch("/api/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ hiddenProviders: Array.from(next) }),
+      });
+      if (!res.ok) throw new Error("Failed to save");
+      notify.success(
+        next.has(providerId)
+          ? `Provider "${providerId}" hidden`
+          : `Provider "${providerId}" visible`,
+      );
+    } catch (e) {
+      setHiddenProviders(hiddenProviders);
+      notify.error("Failed to update visibility");
+    }
+  };
 
   const getProviderStats = (providerId, authType) => {
     const providerConnections = connections.filter(
@@ -252,6 +285,8 @@ export default function ProvidersPage() {
     }
   };
 
+  const isHidden = (id) => hiddenProviders.has(id) && !manageVisibility;
+
   const compatibleProviders = providerNodes
     .filter((node) => node.type === "openai-compatible")
     .map((node) => ({
@@ -261,7 +296,7 @@ export default function ProvidersPage() {
       textIcon: "OC",
       apiType: node.apiType,
     }))
-    .filter((p) => matchSearch(p.name));
+    .filter((p) => matchSearch(p.name) && !isHidden(p.id));
 
   const anthropicCompatibleProviders = providerNodes
     .filter((node) => node.type === "anthropic-compatible")
@@ -271,23 +306,24 @@ export default function ProvidersPage() {
       color: "#D97757",
       textIcon: "AC",
     }))
-    .filter((p) => matchSearch(p.name));
+    .filter((p) => matchSearch(p.name) && !isHidden(p.id));
 
   const oauthEntries = Object.entries(OAUTH_PROVIDERS).filter(
-    ([, info]) => !info.hidden && matchSearch(info.name),
+    ([key, info]) => !info.hidden && matchSearch(info.name) && !isHidden(key),
   );
   const freeEntries = Object.entries(FREE_PROVIDERS).filter(
-    ([, info]) => !info.hidden && matchSearch(info.name),
+    ([key, info]) => !info.hidden && matchSearch(info.name) && !isHidden(key),
   );
   const freeTierEntries = Object.entries(FREE_TIER_PROVIDERS).filter(
-    ([, info]) => !info.hidden && matchSearch(info.name),
+    ([key, info]) => !info.hidden && matchSearch(info.name) && !isHidden(key),
   );
   const apikeyEntries = sortByPriority(
     Object.entries(APIKEY_PROVIDERS).filter(
-      ([, info]) =>
+      ([key, info]) =>
         !info.hidden &&
         (info.serviceKinds ?? ["llm"]).includes("llm") &&
-        matchSearch(info.name),
+        matchSearch(info.name) &&
+        !isHidden(key),
     ),
     "apikey",
   );
@@ -317,6 +353,29 @@ export default function ProvidersPage() {
 
   return (
     <div className="flex min-w-0 flex-col gap-6 px-1 sm:px-0">
+      <div className="flex items-center justify-between gap-3 rounded-xl border border-border bg-bg px-3 py-2">
+        <div className="flex items-center gap-2 text-sm">
+          <span className="material-symbols-outlined text-[18px] text-text-muted">
+            visibility
+          </span>
+          <span className="text-text-main font-medium">Manage Visibility</span>
+          <span className="text-text-muted hidden sm:inline">
+            — show hide/unhide controls on every provider card
+          </span>
+          {hiddenProviders.size > 0 && (
+            <Badge variant="default" size="sm">
+              {hiddenProviders.size} hidden
+            </Badge>
+          )}
+        </div>
+        <Toggle
+          size="sm"
+          checked={manageVisibility}
+          onChange={(v) => setManageVisibility(v)}
+          title="Toggle manage visibility mode"
+        />
+      </div>
+
       {!hasAnyResult && (
         <div className="text-center py-8 border border-dashed border-border rounded-xl">
           <span className="material-symbols-outlined text-[32px] text-text-muted mb-2">
@@ -371,6 +430,9 @@ export default function ProvidersPage() {
                   onToggle={(active) =>
                     handleToggleProvider(info.id, "apikey", active)
                   }
+                  manageVisibility={manageVisibility}
+                  isHidden={hiddenProviders.has(info.id)}
+                  onToggleHidden={() => handleToggleHidden(info.id)}
                 />
               ),
             )}
@@ -416,6 +478,9 @@ export default function ProvidersPage() {
               stats={getProviderStats(key, "oauth")}
               authType="oauth"
               onToggle={(active) => handleToggleProvider(key, "oauth", active)}
+              manageVisibility={manageVisibility}
+              isHidden={hiddenProviders.has(key)}
+              onToggleHidden={() => handleToggleHidden(key)}
             />
           ))}
         </div>
@@ -457,6 +522,9 @@ export default function ProvidersPage() {
               stats={getProviderStats(key, "oauth")}
               authType="free"
               onToggle={(active) => handleToggleProvider(key, "oauth", active)}
+              manageVisibility={manageVisibility}
+              isHidden={hiddenProviders.has(key)}
+              onToggleHidden={() => handleToggleHidden(key)}
             />
           ))}
           {freeTierEntries.map(([key, info]) => (
@@ -467,6 +535,9 @@ export default function ProvidersPage() {
               stats={getProviderStats(key, "apikey")}
               authType="apikey"
               onToggle={(active) => handleToggleProvider(key, "apikey", active)}
+              manageVisibility={manageVisibility}
+              isHidden={hiddenProviders.has(key)}
+              onToggleHidden={() => handleToggleHidden(key)}
             />
           ))}
         </div>
@@ -508,6 +579,9 @@ export default function ProvidersPage() {
               stats={getProviderStats(key, "apikey")}
               authType="apikey"
               onToggle={(active) => handleToggleProvider(key, "apikey", active)}
+              manageVisibility={manageVisibility}
+              isHidden={hiddenProviders.has(key)}
+              onToggleHidden={() => handleToggleHidden(key)}
             />
           ))}
         </div>
@@ -592,7 +666,16 @@ export default function ProvidersPage() {
   );
 }
 
-function ProviderCard({ providerId, provider, stats, authType, onToggle }) {
+function ProviderCard({
+  providerId,
+  provider,
+  stats,
+  authType,
+  onToggle,
+  manageVisibility,
+  isHidden,
+  onToggleHidden,
+}) {
   const { connected, error, errorCode, errorTime, allDisabled } = stats;
   const isNoAuth = !!provider.noAuth;
 
@@ -613,7 +696,7 @@ function ProviderCard({ providerId, provider, stats, authType, onToggle }) {
     <Link href={`/dashboard/providers/${providerId}`} className="group min-w-0">
       <Card
         padding="xs"
-        className={`h-full hover:bg-black/[0.01] dark:hover:bg-white/[0.01] transition-colors cursor-pointer ${allDisabled ? "opacity-50" : ""}`}
+        className={`h-full hover:bg-black/[0.01] dark:hover:bg-white/[0.01] transition-colors cursor-pointer ${allDisabled ? "opacity-50" : ""} ${isHidden ? "ring-1 ring-amber-500/40" : ""}`}
       >
         <div className="flex min-w-0 items-center justify-between gap-3">
           <div className="flex min-w-0 items-center gap-3">
@@ -637,6 +720,16 @@ function ProviderCard({ providerId, provider, stats, authType, onToggle }) {
             <div className="min-w-0">
               <h3 className="truncate font-semibold">{provider.name}</h3>
               <div className="flex min-w-0 items-center gap-1.5 text-xs flex-wrap">
+                {isHidden && (
+                  <Badge variant="warning" size="sm">
+                    <span className="flex items-center gap-1">
+                      <span className="material-symbols-outlined text-[12px]">
+                        visibility_off
+                      </span>
+                      Hidden
+                    </span>
+                  </Badge>
+                )}
                 {allDisabled ? (
                   <Badge variant="default" size="sm">
                     <span className="flex items-center gap-1">
@@ -660,6 +753,22 @@ function ProviderCard({ providerId, provider, stats, authType, onToggle }) {
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-2">
+            {manageVisibility && (
+              <button
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  onToggleHidden?.();
+                }}
+                className="p-1.5 rounded-lg border border-border bg-bg text-text-muted hover:text-text-main hover:border-primary/40 transition-colors"
+                title={isHidden ? "Show provider" : "Hide provider"}
+                aria-label={isHidden ? "Show provider" : "Hide provider"}
+              >
+                <span className="material-symbols-outlined text-[16px]">
+                  {isHidden ? "visibility" : "visibility_off"}
+                </span>
+              </button>
+            )}
             {stats.total > 0 && (
               <div
                 className="opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100"
@@ -692,6 +801,9 @@ ProviderCard.propTypes = {
     color: PropTypes.string,
     textIcon: PropTypes.string,
   }).isRequired,
+  manageVisibility: PropTypes.bool,
+  isHidden: PropTypes.bool,
+  onToggleHidden: PropTypes.func,
   stats: PropTypes.shape({
     connected: PropTypes.number,
     error: PropTypes.number,
@@ -708,6 +820,9 @@ function ApiKeyProviderCard({
   stats,
   authType,
   onToggle,
+  manageVisibility,
+  isHidden,
+  onToggleHidden,
 }) {
   const { connected, error, errorCode, errorTime, allDisabled } = stats;
   const isCompatible = providerId.startsWith(OPENAI_COMPATIBLE_PREFIX);
@@ -741,7 +856,7 @@ function ApiKeyProviderCard({
     <Link href={`/dashboard/providers/${providerId}`} className="group min-w-0">
       <Card
         padding="xs"
-        className={`h-full hover:bg-black/[0.01] dark:hover:bg-white/[0.01] transition-colors cursor-pointer ${allDisabled ? "opacity-50" : ""}`}
+        className={`h-full hover:bg-black/[0.01] dark:hover:bg-white/[0.01] transition-colors cursor-pointer ${allDisabled ? "opacity-50" : ""} ${isHidden ? "ring-1 ring-amber-500/40" : ""}`}
       >
         <div className="flex min-w-0 items-center justify-between gap-3">
           <div className="flex min-w-0 items-center gap-3">
@@ -765,6 +880,16 @@ function ApiKeyProviderCard({
             <div className="min-w-0">
               <h3 className="truncate font-semibold">{provider.name}</h3>
               <div className="flex min-w-0 items-center gap-1.5 text-xs flex-wrap">
+                {isHidden && (
+                  <Badge variant="warning" size="sm">
+                    <span className="flex items-center gap-1">
+                      <span className="material-symbols-outlined text-[12px]">
+                        visibility_off
+                      </span>
+                      Hidden
+                    </span>
+                  </Badge>
+                )}
                 {allDisabled ? (
                   <Badge variant="default" size="sm">
                     <span className="flex items-center gap-1">
@@ -798,6 +923,22 @@ function ApiKeyProviderCard({
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-2">
+            {manageVisibility && (
+              <button
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  onToggleHidden?.();
+                }}
+                className="p-1.5 rounded-lg border border-border bg-bg text-text-muted hover:text-text-main hover:border-primary/40 transition-colors"
+                title={isHidden ? "Show provider" : "Hide provider"}
+                aria-label={isHidden ? "Show provider" : "Hide provider"}
+              >
+                <span className="material-symbols-outlined text-[16px]">
+                  {isHidden ? "visibility" : "visibility_off"}
+                </span>
+              </button>
+            )}
             {stats.total > 0 && (
               <div
                 className="opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100"
@@ -839,6 +980,9 @@ ApiKeyProviderCard.propTypes = {
   }).isRequired,
   authType: PropTypes.string,
   onToggle: PropTypes.func,
+  manageVisibility: PropTypes.bool,
+  isHidden: PropTypes.bool,
+  onToggleHidden: PropTypes.func,
 };
 
 function AddOpenAICompatibleModal({ isOpen, onClose, onCreated }) {

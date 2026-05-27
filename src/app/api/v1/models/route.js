@@ -5,7 +5,7 @@ import {
   isAnthropicCompatibleProvider,
   isOpenAICompatibleProvider,
 } from "@/shared/constants/providers";
-import { getProviderConnections, getCombos, getCustomModels, getModelAliases } from "@/lib/localDb";
+import { getProviderConnections, getCombos, getCustomModels, getModelAliases, getSettings } from "@/lib/localDb";
 import { getDisabledModels } from "@/lib/disabledModelsDb";
 import { resolveKiroModels } from "open-sse/services/kiroModels.js";
 
@@ -138,10 +138,22 @@ function comboMatchesKinds(combo, kindFilter) {
  * @param {string[]} kindFilter - List of service kinds to include (e.g. ["llm"], ["webSearch","webFetch"]).
  */
 export async function buildModelsList(kindFilter) {
+  let hiddenProviders = new Set();
+  try {
+    const settings = await getSettings();
+    hiddenProviders = new Set(
+      Array.isArray(settings?.hiddenProviders) ? settings.hiddenProviders : []
+    );
+  } catch (e) {
+    console.log("Could not fetch settings for hiddenProviders filter");
+  }
+
   let connections = [];
   try {
     connections = await getProviderConnections();
-    connections = connections.filter(c => c.isActive !== false);
+    connections = connections.filter(
+      (c) => c.isActive !== false && !hiddenProviders.has(c.provider)
+    );
   } catch (e) {
     console.log("Could not fetch providers, returning all models");
   }
@@ -205,6 +217,7 @@ export async function buildModelsList(kindFilter) {
     );
     for (const [alias, providerModels] of Object.entries(PROVIDER_MODELS)) {
       const providerId = aliasToProviderId[alias] || alias;
+      if (hiddenProviders.has(providerId)) continue;
       if (!providerMatchesKinds(providerId, kindFilter)) continue;
       for (const model of providerModels) {
         if (!kindFilter.includes(modelKind(model))) continue;

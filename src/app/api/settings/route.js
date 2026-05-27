@@ -70,6 +70,28 @@ export async function PATCH(request) {
       }
     }
 
+    if (Object.prototype.hasOwnProperty.call(body, "hiddenProviders")) {
+      if (!Array.isArray(body.hiddenProviders)) {
+        return NextResponse.json({ error: "hiddenProviders must be an array" }, { status: 400 });
+      }
+      body.hiddenProviders = body.hiddenProviders
+        .filter((v) => typeof v === "string" && v.trim())
+        .map((v) => v.trim());
+    }
+
+    if (Object.prototype.hasOwnProperty.call(body, "minionRoutes")) {
+      if (body.minionRoutes === null || typeof body.minionRoutes !== "object" || Array.isArray(body.minionRoutes)) {
+        return NextResponse.json({ error: "minionRoutes must be an object" }, { status: 400 });
+      }
+      const cleaned = {};
+      for (const [k, v] of Object.entries(body.minionRoutes)) {
+        const key = String(k || "").trim().toLowerCase();
+        const val = String(v || "").trim();
+        if (key && val) cleaned[key] = val;
+      }
+      body.minionRoutes = cleaned;
+    }
+
     const settings = await updateSettings(body);
 
     // Apply outbound proxy settings immediately (no restart required)

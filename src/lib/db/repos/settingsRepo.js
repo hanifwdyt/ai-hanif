@@ -36,6 +36,12 @@ const DEFAULT_SETTINGS = {
   rtkEnabled: true,
   cavemanEnabled: false,
   cavemanLevel: "full",
+  // Hide providers from UI & /v1/models without deleting their code.
+  // Stored as array of provider IDs, e.g. ["antigravity", "kilocode"]
+  hiddenProviders: [],
+  // Map of minion identifier (from x-minion-id header) -> model string.
+  // Example: { "semar": "anthropic/claude-opus-4-7", "bagong": "ds/deepseek-chat" }
+  minionRoutes: {},
 };
 
 async function readRaw() {
